@@ -4,14 +4,13 @@ pragma solidity 0.8.24;
 import { ERC20Burnable, ERC20 } from "@openzeppelin/contracts/token/ERC20/extensions/ERC20Burnable.sol";
 import { Ownable } from "@openzeppelin/contracts/access/Ownable.sol";
 
-/*
- *  @title: StableCoin
- *  @author: https://github.com/gopiinho
- *
- *  @notice: This is a ERC20 implementation of a decentralized stablecoin meant to be governed the the DSCEngine.sol
-contract
+/**
+ * @author  https://github.com/gopiinho
+ * @title   StableCoin
+ * @notice  his is a ERC20 implementation of a decentralized stablecoin meant to be governed the the
+ * DSCEngine.sol
+ * contract
  */
-
 contract StableCoin is ERC20Burnable, Ownable {
     error StableCoin__MustBeMoreThanZero();
     error StableCoin__NotEnoughBalanceToBurn();
