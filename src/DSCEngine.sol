@@ -159,6 +159,12 @@ contract DSCEngine is ReentrancyGuard {
         return totalCollateralValueInUsd;
     }
 
+    /**
+     * Gets the USD value of a token from chainlink price feeds.
+     * @param   token  Address of token to get USD value of.
+     * @param   amount  Amount of tokens to get USD value of paired with its address.
+     * @return  uint256  USD value of the tokens rounded down to readable numbers.
+     */
     function getTokenUsdValue(address token, uint256 amount) public view returns (uint256) {
         AggregatorV3Interface priceFeed = AggregatorV3Interface(s_priceFeeds[token]);
         (, int256 price,,,) = priceFeed.latestRoundData();
