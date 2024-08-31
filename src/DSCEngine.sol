@@ -51,6 +51,7 @@ contract DSCEngine is ReentrancyGuard {
     ///  Events ///
     ///////////////
     event CollateralDeposited(address indexed user, address indexed collateralAsset, uint256 indexed collateralAmount);
+    event CollateralWithdrawn(address indexed user, address indexed collateralAsset, uint256 indexed collateralAmount);
 
     ///////////////
     //  Modifier //
@@ -87,11 +88,27 @@ contract DSCEngine is ReentrancyGuard {
     // External Functions //
     ////////////////////////
     /**
+     * @notice  Deposits the given tokens as collateral and mints the input amount os StableCoin (DSC).
+     * @param   tokenCollateralAddress  Address of the token to be used as collateral.
+     * @param   tokenCollateralAmount  Amount of token to be used as collateral.
+     * @param   amountToMint  Amount of StableCoin (DSC) to be minted.
+     */
+    function depositCollateralAndMintDsc(
+        address tokenCollateralAddress,
+        uint256 tokenCollateralAmount,
+        uint256 amountToMint
+    ) public {
+        depositCollateral(tokenCollateralAddress, tokenCollateralAmount);
+        mintDsc(amountToMint);
+    }
+
+    /**
+     * @notice  Deposits the given tokens as collateral.
      * @param   tokenCollateralAddress  Address of the token to be used as collateral.
      * @param   tokenCollateralAmount  Amount of token to be used as collateral.
      */
     function depositCollateral(address tokenCollateralAddress, uint256 tokenCollateralAmount)
-        external
+        public
         isAllowedToken(tokenCollateralAddress)
         moreThanZero(tokenCollateralAmount)
         nonReentrant
@@ -102,13 +119,34 @@ contract DSCEngine is ReentrancyGuard {
         if (!success) {
             revert DSCEngine__TransferFailed();
         }
+        _revertIfHealthFactorIsBroken(msg.sender);
+    }
+
+    /**
+     * @notice  Withdraws the given tokens as collateral.
+     * @param   tokenCollateralAddress  Address of the token to be withdrown as collateral.
+     * @param   tokenCollateralAmount  Amount of token to be withdrawn as collateral.
+     */
+    function withdrawCollateral(address tokenCollateralAddress, uint256 tokenCollateralAmount)
+        public
+        isAllowedToken(tokenCollateralAddress)
+        moreThanZero(tokenCollateralAmount)
+        nonReentrant
+    {
+        s_collateralDeposited[msg.sender][tokenCollateralAddress] -= tokenCollateralAmount;
+        emit CollateralWithdrawn(msg.sender, tokenCollateralAddress, tokenCollateralAmount);
+
+        bool success = IERC20(tokenCollateralAddress).transferFrom(address(this), msg.sender, tokenCollateralAmount);
+        if (!success) {
+            revert DSCEngine__TransferFailed();
+        }
     }
 
     /**
      * @notice  User must have more collateral than minimum threshold.
      * @param   amountToMint The amount of StableCoin (DSC) to be minted.
      */
-    function mintDsc(uint256 amountToMint) private moreThanZero(amountToMint) nonReentrant {
+    function mintDsc(uint256 amountToMint) public moreThanZero(amountToMint) nonReentrant {
         s_DSCMinted[msg.sender] += amountToMint;
         _revertIfHealthFactorIsBroken(msg.sender);
         bool minted = i_stableCoin.mint(msg.sender, amountToMint);
