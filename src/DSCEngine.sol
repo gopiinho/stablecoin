@@ -22,7 +22,7 @@ import { AggregatorV3Interface } from "@chainlink/contracts/src/v0.8/interfaces/
  */
 contract DSCEngine is ReentrancyGuard {
     ///////////////
-    ///  Errors ///
+    /// Errors  ///
     ///////////////
     error DSEngine__MustBeMoreThanZero();
     error DSEngine__TokenNotAllowed();
@@ -30,6 +30,9 @@ contract DSCEngine is ReentrancyGuard {
     error DSEngine__TokenAddressesAndPriceFeedAddressesLengthNotEqual();
     error DSEngine__BreaksHealthFactor(uint256 healthFactor);
     error DSCEngine__MintingFailed();
+    error DSCEngine__BurningFailed();
+    error DSCEngine__HeathFactorOk(uint256 heathFactor);
+    error DSCEngine__HealthFactorNotImproved();
 
     ///////////////////////
     /// State Variables ///
@@ -38,7 +41,8 @@ contract DSCEngine is ReentrancyGuard {
     uint256 private constant LIQUIDATION_PRECISION = 100;
     uint256 private constant ADDITIONAL_FEED_PRECISION = 1e10;
     uint256 private constant PRECISION = 1e18;
-    uint256 private constant MIN_HEALTH_FACTOR = 1;
+    uint256 private constant MIN_HEALTH_FACTOR = 1e18;
+    uint256 private constant LIQUIDATION_BONUS_PERCENTAGE = 10;
 
     StableCoin private immutable i_stableCoin;
 
@@ -51,7 +55,12 @@ contract DSCEngine is ReentrancyGuard {
     ///  Events ///
     ///////////////
     event CollateralDeposited(address indexed user, address indexed collateralAsset, uint256 indexed collateralAmount);
-    event CollateralWithdrawn(address indexed user, address indexed collateralAsset, uint256 indexed collateralAmount);
+    event CollateralWithdrawn(
+        address indexed redeemedFrom,
+        address indexed redeemedTo,
+        address indexed collateralAsset,
+        uint256 collateralAmount
+    );
 
     ///////////////
     //  Modifier //
@@ -123,6 +132,20 @@ contract DSCEngine is ReentrancyGuard {
     }
 
     /**
+     * @notice  This function burns the StableCoin (DSC) and withdraws the given tokens as collateral.
+     * @param   tokenCollateralAddress  Address of the token to be withdrown as collateral.
+     * @param   tokenCollateralAmount  Amount of token to be withdrawn as collateral.
+     */
+    function withdrawCollateralForDsc(address tokenCollateralAddress, uint256 tokenCollateralAmount)
+        external
+        isAllowedToken(tokenCollateralAddress)
+        moreThanZero(tokenCollateralAmount)
+    {
+        burnDsc(tokenCollateralAmount);
+        withdrawCollateral(tokenCollateralAddress, tokenCollateralAmount);
+    }
+
+    /**
      * @notice  Withdraws the given tokens as collateral.
      * @param   tokenCollateralAddress  Address of the token to be withdrown as collateral.
      * @param   tokenCollateralAmount  Amount of token to be withdrawn as collateral.
@@ -133,17 +156,12 @@ contract DSCEngine is ReentrancyGuard {
         moreThanZero(tokenCollateralAmount)
         nonReentrant
     {
-        s_collateralDeposited[msg.sender][tokenCollateralAddress] -= tokenCollateralAmount;
-        emit CollateralWithdrawn(msg.sender, tokenCollateralAddress, tokenCollateralAmount);
-
-        bool success = IERC20(tokenCollateralAddress).transferFrom(address(this), msg.sender, tokenCollateralAmount);
-        if (!success) {
-            revert DSCEngine__TransferFailed();
-        }
+        _withdrawCollateral(msg.sender, msg.sender, tokenCollateralAddress, tokenCollateralAmount);
     }
 
     /**
      * @notice  User must have more collateral than minimum threshold.
+     * @notice  Mints the input amount of StableCoin (DSC) to the user.
      * @param   amountToMint The amount of StableCoin (DSC) to be minted.
      */
     function mintDsc(uint256 amountToMint) public moreThanZero(amountToMint) nonReentrant {
@@ -155,9 +173,44 @@ contract DSCEngine is ReentrancyGuard {
         }
     }
 
+    /**
+     * @notice  Burns the input amount of StableCoin (DSC) from the user and reduces their accounting debt.
+     * @param   amountToBurn  Amount of StableCoin (DSC) to be burned.
+     */
+    function burnDsc(uint256 amountToBurn) public moreThanZero(amountToBurn) nonReentrant {
+        _burnDsc(amountToBurn, msg.sender, msg.sender);
+    }
+
     ///////////////////////////////////////
     // Private & Internal View Functions //
     ///////////////////////////////////////
+    /**
+     * @dev Low-Level function, do not call this, unless function calling this is checking for health factors.
+     */
+    function _burnDsc(uint256 amountToBurn, address onBehalfOf, address dscFrom) private {
+        s_DSCMinted[onBehalfOf] -= amountToBurn;
+        _revertIfHealthFactorIsBroken(msg.sender);
+        bool success = i_stableCoin.transferFrom(dscFrom, address(this), amountToBurn);
+        if (!success) {
+            revert DSCEngine__TransferFailed();
+        }
+        i_stableCoin.burn(amountToBurn);
+    }
+
+    function _withdrawCollateral(
+        address from,
+        address to,
+        address tokenCollateralAddress,
+        uint256 tokenCollateralAmount
+    ) private isAllowedToken(tokenCollateralAddress) moreThanZero(tokenCollateralAmount) nonReentrant {
+        s_collateralDeposited[from][tokenCollateralAddress] -= tokenCollateralAmount;
+        emit CollateralWithdrawn(from, to, tokenCollateralAddress, tokenCollateralAmount);
+        bool success = IERC20(tokenCollateralAddress).transfer(to, tokenCollateralAmount);
+        if (!success) {
+            revert DSCEngine__TransferFailed();
+        }
+    }
+
     function _getAccountInformation(address user)
         private
         view
@@ -185,6 +238,40 @@ contract DSCEngine is ReentrancyGuard {
         }
     }
 
+    /**
+     * @notice  Allows other users to patially liquidate the positions of other users if their help factor is below
+     * MIN_HEALTH_FACTOR.
+     * @notice  You will get a liquidation bonus for taking the users funds.
+     * @notice  This function assumes the protocol is roughly 200% over collateralized in order for this mechanism to
+     * work.
+     * @param   collateral The ERC20 address of token to liquidate from user.
+     * @param   user The address of user that has broken the minimum heath factor.
+     * @param   debtToCover The amount of DSC to burn to improve the heath factor of the user.
+     */
+    function liquidate(address collateral, address user, uint256 debtToCover)
+        external
+        moreThanZero(debtToCover)
+        nonReentrant
+    {
+        uint256 startingUserHealthFactor = _checkHealthFactor(user);
+        if (startingUserHealthFactor >= MIN_HEALTH_FACTOR) {
+            revert DSCEngine__HeathFactorOk(startingUserHealthFactor);
+        }
+        // Calculate how many collateral tokens we need to cover the debt
+        uint256 tokenAmountFromDebtCovered = getTokenAmountFromUsd(collateral, debtToCover);
+        // Here the person who liquidates the collateral will get a bonus of LIQUIDATION_BONUS_PERCENTAGE
+        uint256 bonusCollateral = (tokenAmountFromDebtCovered * LIQUIDATION_BONUS_PERCENTAGE) / PRECISION;
+        uint256 totalCollateralToRedeem = tokenAmountFromDebtCovered + bonusCollateral;
+        _withdrawCollateral(user, msg.sender, collateral, totalCollateralToRedeem);
+        _burnDsc(debtToCover, user, msg.sender);
+
+        uint256 endingUserHealthFactor = _checkHealthFactor(user);
+        if (endingUserHealthFactor <= startingUserHealthFactor) {
+            revert DSCEngine__HealthFactorNotImproved();
+        }
+        _revertIfHealthFactorIsBroken(msg.sender);
+    }
+
     ///////////////////////////////////////
     // Public & External View Functions ///
     ///////////////////////////////////////
@@ -195,6 +282,12 @@ contract DSCEngine is ReentrancyGuard {
             totalCollateralValueInUsd += getTokenUsdValue(token, amount);
         }
         return totalCollateralValueInUsd;
+    }
+
+    function getTokenAmountFromUsd(address token, uint256 amountInUsd) public view returns (uint256) {
+        AggregatorV3Interface priceFeed = AggregatorV3Interface(s_priceFeeds[token]);
+        (, int256 price,,,) = priceFeed.latestRoundData();
+        return (amountInUsd * PRECISION) / uint256(price) * ADDITIONAL_FEED_PRECISION;
     }
 
     /**
