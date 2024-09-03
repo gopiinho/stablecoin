@@ -7,7 +7,8 @@ import { IERC20 } from "@openzeppelin/contracts/interfaces/IERC20.sol";
 import { AggregatorV3Interface } from "@chainlink/contracts/src/v0.8/interfaces/AggregatorV3Interface.sol";
 
 /**
- * @author  https://github.com/gopiinho
+ *
+ *
  * @title   DSEngine
  * This system is minimal by designs and have to maintain 1 DSC == $1 USD peg.
  *
@@ -275,6 +276,10 @@ contract DSCEngine is ReentrancyGuard {
     ///////////////////////////////////////
     // Public & External View Functions ///
     ///////////////////////////////////////
+    /**
+     * @notice  Gets the total collateral value of a user in USD.
+     * @param   user Address of user to check the collateral value.
+     */
     function getAccountCollateralValue(address user) public view returns (uint256 totalCollateralValueInUsd) {
         for (uint256 i = 0; i < s_collateralTokens.length; i++) {
             address token = s_collateralTokens[i];
@@ -284,14 +289,19 @@ contract DSCEngine is ReentrancyGuard {
         return totalCollateralValueInUsd;
     }
 
+    /**
+     * @notice  Gets the amount of a token in USD from chainlink price feeds.
+     * @param   token Address of ERC20 token to check the amount per USD value of.
+     * @param   amountInUsd USD amount to check the token value of.
+     */
     function getTokenAmountFromUsd(address token, uint256 amountInUsd) public view returns (uint256) {
         AggregatorV3Interface priceFeed = AggregatorV3Interface(s_priceFeeds[token]);
         (, int256 price,,,) = priceFeed.latestRoundData();
-        return (amountInUsd * PRECISION) / uint256(price) * ADDITIONAL_FEED_PRECISION;
+        return ((amountInUsd * PRECISION) / (uint256(price) * ADDITIONAL_FEED_PRECISION));
     }
 
     /**
-     * Gets the USD value of a token from chainlink price feeds.
+     * @notice  Gets the USD value of a token from chainlink price feeds.
      * @param   token  Address of token to get USD value of.
      * @param   amount  Amount of tokens to get USD value of paired with its address.
      * @return  uint256  USD value of the tokens rounded down to readable numbers.
