@@ -21,9 +21,10 @@ contract DSCEngineTest is Test {
     address wbtcPriceFeed;
 
     address public USER = makeAddr("user");
-    uint256 public constant COLLATERAL_AMOUNT = 5 ether;
-    uint256 public constant STARTING_MOCK_ETH_BALANCE = 50 ether;
+    uint256 public constant COLLATERAL_AMOUNT = 5e18;
+    uint256 public constant STARTING_MOCK_ETH_BALANCE = 50e18;
     uint256 public constant STABLECOIN_MINT_AMOUNT = 100_000_000_000_000_000_000;
+    uint256 public constant DSC_AMOUNT_TO_MINT = 50e18;
 
     function setUp() public {
         deployer = new DeployDSC();
@@ -69,6 +70,14 @@ contract DSCEngineTest is Test {
     ////////////////////////
     //  Collateral Tests  //
     ////////////////////////
+    modifier depositCollateralAndMintedDsc() {
+        vm.startPrank(USER);
+        ERC20Mock(weth).approve(address(engine), COLLATERAL_AMOUNT);
+        engine.depositCollateralAndMintDsc(weth, COLLATERAL_AMOUNT, DSC_AMOUNT_TO_MINT);
+        vm.stopPrank();
+        _;
+    }
+
     function testRevertsIfZeroCollateral() public {
         vm.startPrank(USER);
         ERC20Mock(weth).approve(address(engine), COLLATERAL_AMOUNT);
@@ -78,13 +87,75 @@ contract DSCEngineTest is Test {
         vm.stopPrank();
     }
 
-    // function testMintingOfStableCoinAfterCollateral() public {
-    //     vm.startPrank(USER);
-    //     ERC20Mock(weth).approve(address(engine), COLLATERAL_AMOUNT);
-    //     engine.depositCollateral(weth, COLLATERAL_AMOUNT);
+    function testRevertWithUnapprovedCollateralTokens() public {
+        ERC20Mock randomToken = new ERC20Mock();
+        ERC20Mock(randomToken).mint(USER, COLLATERAL_AMOUNT);
 
-    //     //mint the stablecoin
-    //     engine.mintDsc(STABLECOIN_MINT_AMOUNT);
-    //     console.log(STABLECOIN_MINT_AMOUNT);
-    // }
+        vm.startPrank(USER);
+        ERC20Mock(randomToken).approve(address(engine), COLLATERAL_AMOUNT);
+        vm.expectRevert(DSCEngine.DSEngine__TokenNotAllowed.selector);
+        engine.depositCollateral(address(randomToken), COLLATERAL_AMOUNT);
+        vm.stopPrank();
+    }
+
+    function testCandepositCollateralAndMintDscAndGetAccountInfo() public depositCollateralAndMintedDsc {
+        (uint256 totalDscMinted, uint256 collateralValueInUsd) = engine.getAccountInformation(USER);
+
+        uint256 expectedTotalDscMinted = dsc.balanceOf(USER);
+        uint256 expectedDepositAmount = engine.getTokenAmountFromUsd(weth, collateralValueInUsd);
+        assertEq(totalDscMinted, expectedTotalDscMinted);
+        assertEq(COLLATERAL_AMOUNT, expectedDepositAmount);
+    }
+
+    function testCandepositCollateralAndMintDsc() public {
+        vm.startPrank(USER);
+        ERC20Mock(weth).approve(address(engine), COLLATERAL_AMOUNT);
+        engine.depositCollateralAndMintDsc(weth, COLLATERAL_AMOUNT, DSC_AMOUNT_TO_MINT);
+        vm.stopPrank();
+
+        (uint256 totalDscMinted,) = engine.getAccountInformation(USER);
+        assertEq(totalDscMinted, DSC_AMOUNT_TO_MINT);
+    }
+
+    ///////////////////
+    // Mint DSC Test //
+    ///////////////////
+    function testCanMintDsc() public depositCollateralAndMintedDsc {
+        uint256 userBalanceOfDsc = dsc.balanceOf(USER);
+        assertEq(userBalanceOfDsc, DSC_AMOUNT_TO_MINT);
+    }
+
+    ///////////////////
+    // Burn DSC Test //
+    ///////////////////
+    function testCanBurnDsc() public depositCollateralAndMintedDsc {
+        uint256 dscToBurn = 20e18;
+
+        vm.startPrank(USER);
+        engine.mintDsc(DSC_AMOUNT_TO_MINT);
+        vm.stopPrank();
+
+        uint256 startingUserDsc = engine.getUserMintedDsc(USER);
+
+        vm.startPrank(USER);
+        engine.burnDsc(dscToBurn);
+        vm.stopPrank();
+
+        uint256 endingUserDsc = engine.getUserMintedDsc(USER);
+
+        assertEq(startingUserDsc, endingUserDsc + dscToBurn);
+    }
+
+    function testCanWithdrawCollateral() public depositCollateralAndMintedDsc {
+        uint256 withdrawAmount = 3e18;
+        uint256 startingUserCollateral = engine.getUserDepositedCollateralBalance(USER, weth);
+        assertEq(startingUserCollateral, COLLATERAL_AMOUNT);
+
+        vm.startPrank(USER);
+        engine.withdrawCollateral(weth, withdrawAmount);
+        vm.stopPrank();
+
+        uint256 endingUserCollateral = engine.getUserDepositedCollateralBalance(USER, weth);
+        assertEq(startingUserCollateral - withdrawAmount, endingUserCollateral);
+    }
 }

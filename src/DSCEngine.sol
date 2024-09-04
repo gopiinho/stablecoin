@@ -203,7 +203,7 @@ contract DSCEngine is ReentrancyGuard {
         address to,
         address tokenCollateralAddress,
         uint256 tokenCollateralAmount
-    ) private isAllowedToken(tokenCollateralAddress) moreThanZero(tokenCollateralAmount) nonReentrant {
+    ) private isAllowedToken(tokenCollateralAddress) moreThanZero(tokenCollateralAmount) {
         s_collateralDeposited[from][tokenCollateralAddress] -= tokenCollateralAmount;
         emit CollateralWithdrawn(from, to, tokenCollateralAddress, tokenCollateralAmount);
         bool success = IERC20(tokenCollateralAddress).transfer(to, tokenCollateralAmount);
@@ -229,6 +229,9 @@ contract DSCEngine is ReentrancyGuard {
     function _checkHealthFactor(address user) internal view returns (uint256) {
         (uint256 totalDscMinted, uint256 collateralValueInUsd) = _getAccountInformation(user);
         uint256 collateralAdjustedForThreshold = (collateralValueInUsd * LIQUIDATION_THRESHOLD) / LIQUIDATION_PRECISION;
+        if (totalDscMinted == 0) {
+            return type(uint256).max; // Return maximum value if no DSC is minted
+        }
         return ((collateralAdjustedForThreshold * PRECISION) / totalDscMinted);
     }
 
@@ -310,5 +313,21 @@ contract DSCEngine is ReentrancyGuard {
         AggregatorV3Interface priceFeed = AggregatorV3Interface(s_priceFeeds[token]);
         (, int256 price,,,) = priceFeed.latestRoundData();
         return ((uint256(price) * ADDITIONAL_FEED_PRECISION) * amount) / PRECISION;
+    }
+
+    function getAccountInformation(address user)
+        external
+        view
+        returns (uint256 totalDscMinted, uint256 collateralValueInUsd)
+    {
+        (totalDscMinted, collateralValueInUsd) = _getAccountInformation(user);
+    }
+
+    function getUserDepositedCollateralBalance(address user, address collateral) external view returns (uint256) {
+        return s_collateralDeposited[user][collateral];
+    }
+
+    function getUserMintedDsc(address user) external view returns (uint256) {
+        return s_DSCMinted[user];
     }
 }
