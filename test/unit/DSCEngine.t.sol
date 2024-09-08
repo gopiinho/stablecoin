@@ -117,35 +117,6 @@ contract DSCEngineTest is Test {
         assertEq(totalDscMinted, DSC_AMOUNT_TO_MINT);
     }
 
-    ///////////////////
-    // Mint DSC Test //
-    ///////////////////
-    function testCanMintDsc() public depositCollateralAndMintedDsc {
-        uint256 userBalanceOfDsc = dsc.balanceOf(USER);
-        assertEq(userBalanceOfDsc, DSC_AMOUNT_TO_MINT);
-    }
-
-    ///////////////////
-    // Burn DSC Test //
-    ///////////////////
-    function testCanBurnDsc() public depositCollateralAndMintedDsc {
-        uint256 dscToBurn = 20e18;
-
-        vm.startPrank(USER);
-        engine.mintDsc(DSC_AMOUNT_TO_MINT);
-        vm.stopPrank();
-
-        uint256 startingUserDsc = engine.getUserMintedDsc(USER);
-
-        vm.startPrank(USER);
-        engine.burnDsc(dscToBurn);
-        vm.stopPrank();
-
-        uint256 endingUserDsc = engine.getUserMintedDsc(USER);
-
-        assertEq(startingUserDsc, endingUserDsc + dscToBurn);
-    }
-
     function testCanWithdrawCollateral() public depositCollateralAndMintedDsc {
         uint256 withdrawAmount = 3e18;
         uint256 startingUserCollateral = engine.getUserDepositedCollateralBalance(USER, weth);
@@ -157,5 +128,45 @@ contract DSCEngineTest is Test {
 
         uint256 endingUserCollateral = engine.getUserDepositedCollateralBalance(USER, weth);
         assertEq(startingUserCollateral - withdrawAmount, endingUserCollateral);
+    }
+
+    ///////////////////
+    // Mint DSC Test //
+    ///////////////////
+    function testCanMintDsc() public depositCollateralAndMintedDsc {
+        uint256 userBalanceOfDsc = dsc.balanceOf(USER);
+        assertEq(userBalanceOfDsc, DSC_AMOUNT_TO_MINT);
+    }
+
+    ///////////////////
+    // Burn DSC Test //
+    ///////////////////
+    function testCantBurnMoreThanUserHas() public {
+        vm.prank(USER);
+        vm.expectRevert();
+        engine.burnDsc(1e18);
+    }
+
+    function testCanBurnDsc() public depositCollateralAndMintedDsc {
+        uint256 dscToBurn = 20e18;
+        vm.startPrank(USER);
+        dsc.approve(address(engine), dscToBurn);
+        engine.burnDsc(dscToBurn);
+        vm.stopPrank();
+        uint256 userBalance = dsc.balanceOf(USER);
+        assertEq(userBalance, DSC_AMOUNT_TO_MINT - dscToBurn);
+    }
+
+    ////////////////////////
+    // Health Factir Test //
+    ////////////////////////
+    function testProperlyReportsHealthFactor() public depositCollateralAndMintedDsc {
+        uint256 expectedHealthFactor = 100e18;
+        uint256 healthFactor = engine.getHealthFactor(USER);
+        // 5 ether collateral * 2000 = $10000
+        //  10000 * 0.5 = 5000 (50% liquidation threshold)
+        // Minted $50 DCE means we need $100 collateral at all times
+        // 5000 / 50 = 100 health factor
+        assertEq(expectedHealthFactor, healthFactor);
     }
 }
