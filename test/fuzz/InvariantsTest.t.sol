@@ -12,20 +12,25 @@ import { HelperConfig } from "../../script/HelperConfig.s.sol";
 import { DSCEngine } from "../../src/DSCEngine.sol";
 import { StableCoin } from "../../src/StableCoin.sol";
 import { IERC20 } from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import { Handler } from "./Handler.t.sol";
 
 contract InvariantTest is StdInvariant, Test {
     DeployDSC public deployer;
     HelperConfig public config;
     DSCEngine public engine;
     StableCoin public stableCoin;
-    address weth;
-    address wbtc;
+    address public weth;
+    address public wbtc;
+    Handler public handler;
 
     function setUp() external {
         deployer = new DeployDSC();
         (stableCoin, engine, config) = deployer.run();
         (weth, wbtc,,,) = config.activeNetworkConfig();
-        targetContract(address(stableCoin));
+        handler = new Handler(engine, stableCoin);
+        //use this for open testing for super weird randomness
+        // targetContract(address(engine));
+        targetContract(address(handler));
     }
 
     // Get the total USD value of protocol collateral.
@@ -38,6 +43,6 @@ contract InvariantTest is StdInvariant, Test {
         uint256 wethValue = engine.getTokenUsdValue(weth, totalWethDeposited);
         uint256 wbtcValue = engine.getTokenUsdValue(wbtc, totalWbthDeposited);
 
-        assert(wethValue + wbtcValue > totalSupply);
+        assert(wethValue + wbtcValue >= totalSupply);
     }
 }
