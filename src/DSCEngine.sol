@@ -5,13 +5,11 @@ import { StableCoin } from "./StableCoin.sol";
 import { ReentrancyGuard } from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import { IERC20 } from "@openzeppelin/contracts/interfaces/IERC20.sol";
 import { AggregatorV3Interface } from "@chainlink/contracts/src/v0.8/interfaces/AggregatorV3Interface.sol";
+import { OracleLib } from "./libraries/OracleLib.sol";
 
 /**
- *
- *
  * @title   DSEngine
  * This system is minimal by designs and have to maintain 1 DSC == $1 USD peg.
- *
  * The properties of the stablecoin are following:
  * - Algorithmically Stable
  * - $1 USD Pegged
@@ -34,6 +32,11 @@ contract DSCEngine is ReentrancyGuard {
     error DSCEngine__BurningFailed();
     error DSCEngine__HeathFactorOk(uint256 heathFactor);
     error DSCEngine__HealthFactorNotImproved();
+
+    //////////////
+    /// Types  ///
+    //////////////
+    using OracleLib for AggregatorV3Interface;
 
     ///////////////////////
     /// State Variables ///
@@ -299,7 +302,7 @@ contract DSCEngine is ReentrancyGuard {
      */
     function getTokenAmountFromUsd(address token, uint256 amountInUsd) public view returns (uint256) {
         AggregatorV3Interface priceFeed = AggregatorV3Interface(s_priceFeeds[token]);
-        (, int256 price,,,) = priceFeed.latestRoundData();
+        (, int256 price,,,) = priceFeed.staleCheckLastRoundData();
         return ((amountInUsd * PRECISION) / (uint256(price) * ADDITIONAL_FEED_PRECISION));
     }
 
@@ -311,7 +314,7 @@ contract DSCEngine is ReentrancyGuard {
      */
     function getTokenUsdValue(address token, uint256 amount) public view returns (uint256) {
         AggregatorV3Interface priceFeed = AggregatorV3Interface(s_priceFeeds[token]);
-        (, int256 price,,,) = priceFeed.latestRoundData();
+        (, int256 price,,,) = priceFeed.staleCheckLastRoundData();
         return ((uint256(price) * ADDITIONAL_FEED_PRECISION) * amount) / PRECISION;
     }
 
@@ -337,5 +340,29 @@ contract DSCEngine is ReentrancyGuard {
 
     function getCollateralTokens() external view returns (address[] memory) {
         return s_collateralTokens;
+    }
+
+    function getLiquidationThreshold() external pure returns (uint256) {
+        return LIQUIDATION_THRESHOLD;
+    }
+
+    function getLiquidationPrecision() external pure returns (uint256) {
+        return LIQUIDATION_PRECISION;
+    }
+
+    function getPrecision() external pure returns (uint256) {
+        return PRECISION;
+    }
+
+    function getMinimumHealthFactor() external pure returns (uint256) {
+        return MIN_HEALTH_FACTOR;
+    }
+
+    function getLiquidationBonusPercentage() external pure returns (uint256) {
+        return LIQUIDATION_BONUS_PERCENTAGE;
+    }
+
+    function getCollateralTokenPriceFeed(address token) external view returns (address) {
+        return s_priceFeeds[token];
     }
 }
