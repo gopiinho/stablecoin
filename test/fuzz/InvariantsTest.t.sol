@@ -6,6 +6,7 @@ pragma solidity 0.8.24;
 // 2. Getter functions should never revert.
 
 import { Test } from "forge-std/Test.sol";
+import { console } from "forge-std/console.sol";
 import { StdInvariant } from "forge-std/StdInvariant.sol";
 import { DeployDSC } from "../../script/DeployDSC.s.sol";
 import { HelperConfig } from "../../script/HelperConfig.s.sol";
@@ -42,6 +43,11 @@ contract InvariantTest is StdInvariant, Test {
 
         uint256 wethValue = engine.getTokenUsdValue(weth, totalWethDeposited);
         uint256 wbtcValue = engine.getTokenUsdValue(wbtc, totalWbthDeposited);
+
+        console.log("wethValue: %s", wethValue);
+        console.log("wbtcValue: %s", wbtcValue);
+        console.log("DSC supply: %s", totalSupply);
+        console.log("Times mint is called: ", handler.timesMintIsCalled());
 
         assert(wethValue + wbtcValue >= totalSupply);
     }
